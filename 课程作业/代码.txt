@@ -1,0 +1,572 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+#include <locale.h>
+#include <windows.h>  // 控制台编码所需头文件
+#define MAX_NAME 20
+#define MAX_PHONE 15
+#define MAX_GROUP 16
+#define LETTER_COUNT 27
+#define FILENAME "contacts.txt"
+
+// 联系人数据结构
+typedef struct Contact {
+    char name[MAX_NAME];
+    char phone[MAX_PHONE];
+    char group[MAX_GROUP];
+    char initial;// 声母：a~z 或 '#'
+    struct Contact* next;
+} Contact;
+// 27个声母分组头指针
+Contact* headers[LETTER_COUNT];
+
+/* ==================== 函数声明 ==================== */
+char getInitial(const char* name);
+void insertSorted(Contact** head, Contact* newNode);
+int addContact(const char* name, const char* phone, const char* group);
+void displayAll(void);
+Contact* searchContact(const char* name);
+int modifyContact(const char* oldName, const char* newName, const char* newPhone, const char* newGroup);
+int deleteContact(const char* name, int showTip);
+void browseByGroup(const char* groupName);
+int loadFromFile(const char* filename);
+int saveToFile(const char* filename);
+void freeAll(void);
+void showMainMenu(void);
+int isNameExist(const char *name); // 查重函数声明
+
+/**
+ * 判断姓名是否已存在，存在返回1，不存在返回0
+ */
+int isNameExist(const char *name)
+{
+    if (name == NULL || strlen(name) == 0)
+        return 0;
+    // 遍历全部声母分组
+    for (int i = 0; i < LETTER_COUNT; i++)
+    {
+        Contact *p = headers[i];
+        while (p != NULL)
+        {
+            if (strcmp(p->name, name) == 0)
+            {
+                return 1;
+            }
+            p = p->next;
+        }
+    }
+    return 0;
+}
+
+/**
+ * 获取姓名的声母（修复内存越界）
+ */
+char getInitial(const char* name) {
+    if (name == NULL || name[0] == '\0') return '#';
+    unsigned char first = (unsigned char)name[0];
+
+    // 判断英文姓名
+    if ((first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z')) {
+        return tolower(first);
+    }
+
+    char firstHan[3] = {0};
+    if(strlen(name) >= 2)
+    {
+        firstHan[0] = name[0];
+        firstHan[1] = name[1];
+    }
+    firstHan[2] = '\0';
+
+    if (strcmp(firstHan, "张") == 0) return 'z';
+    if (strcmp(firstHan, "李") == 0) return 'l';
+    if (strcmp(firstHan, "王") == 0) return 'w';
+    if (strcmp(firstHan, "陈") == 0) return 'c';
+    if (strcmp(firstHan, "黄") == 0) return 'h';
+    if (strcmp(firstHan, "刘") == 0) return 'l';
+    if (strcmp(firstHan, "杨") == 0) return 'y';
+    if (strcmp(firstHan, "赵") == 0) return 'z';
+    if (strcmp(firstHan, "周") == 0) return 'z';
+    if (strcmp(firstHan, "吴") == 0) return 'w';
+    if (strcmp(firstHan, "徐") == 0) return 'x';
+    if (strcmp(firstHan, "孙") == 0) return 's';
+    if (strcmp(firstHan, "马") == 0) return 'm';
+    if (strcmp(firstHan, "朱") == 0) return 'z';
+    if (strcmp(firstHan, "胡") == 0) return 'h';
+    if (strcmp(firstHan, "林") == 0) return 'l';
+    if (strcmp(firstHan, "郭") == 0) return 'g';
+    if (strcmp(firstHan, "何") == 0) return 'h';
+    if (strcmp(firstHan, "高") == 0) return 'g';
+
+    // 未匹配到的汉字/特殊字符归入#组
+    return '#';
+}
+
+/**
+ * 按姓名字典序有序插入链表
+ */
+void insertSorted(Contact** head, Contact* newNode) {
+    if (*head == NULL || strcmp(newNode->name, (*head)->name) < 0) {
+        newNode->next = *head;
+        *head = newNode;
+        return;
+    }
+    Contact* curr = *head;
+    while (curr->next != NULL && strcmp(newNode->name, curr->next->name) > 0) {
+        curr = curr->next;
+    }
+    newNode->next = curr->next;
+    curr->next = newNode;
+}
+
+/**
+ * 添加联系人（新增重名校验）
+ */
+int addContact(const char* name, const char* phone, const char* group) {
+    if (name == NULL || strlen(name) == 0) {
+        printf("错误：姓名不能为空！\n");
+        return 0;
+    }
+    if (strlen(phone) == 0 || strlen(phone) > MAX_PHONE) {
+        printf("错误：电话号码格式无效！\n");
+        return 0;
+    }
+
+    // 重复联系人判断
+    if (isNameExist(name))
+    {
+        printf("错误：该姓名联系人已存在，无法重复添加！\n");
+        return 0;
+    }
+
+    Contact* newContact = (Contact*)malloc(sizeof(Contact));
+    if (newContact == NULL) {
+        printf("错误：内存分配失败！\n");
+        return 0;
+    }
+
+    strcpy(newContact->name, name);
+    strcpy(newContact->phone, phone);
+    strcpy(newContact->group, group);
+    newContact->initial = getInitial(name);
+    newContact->next = NULL;
+
+    // 定位对应声母分组
+    int index;
+    if (newContact->initial >= 'a' && newContact->initial <= 'z') {
+        index = newContact->initial - 'a';
+    } else {
+        index = 26;  // '#' 组
+    }
+
+    insertSorted(&headers[index], newContact);
+    return 1;
+}
+
+/**
+ * 显示所有联系人（按声母分组）
+ */
+void displayAll(void) {
+    int total = 0;
+    printf("\n========================================\n");
+    printf("         通讯录（按声母分组）\n");
+    printf("========================================\n");
+
+    for (int i = 0; i < LETTER_COUNT; i++) {
+        if (headers[i] == NULL) continue;
+
+        // 分组标题
+        if (i < 26) {
+            printf("\n[ %c ]\n", 'A' + i);
+        } else {
+            printf("\n[ # ]  (外国友人/其他)\n");
+        }
+        printf("----------------------------------------\n");
+
+        Contact* curr = headers[i];
+        while (curr != NULL) {
+            printf("  姓名：%-10s 电话：%-15s 群组：%s\n",
+                   curr->name, curr->phone, curr->group);
+            curr = curr->next;
+            total++;
+        }
+    }
+
+    printf("\n========================================\n");
+    printf("  总计：%d 位联系人\n", total);
+    printf("========================================\n");
+}
+
+/**
+ * 按姓名查找联系人
+ */
+Contact* searchContact(const char* name) {
+    if (name == NULL || strlen(name) == 0) return NULL;
+
+    char initial = getInitial(name);
+    int index;
+    if (initial >= 'a' && initial <= 'z') {
+        index = initial - 'a';
+    } else {
+        index = 26;
+    }
+
+    Contact* curr = headers[index];
+    while (curr != NULL) {
+        if (strcmp(curr->name, name) == 0) {
+            return curr;
+        }
+        curr = curr->next;
+    }
+    return NULL;
+}
+
+/**
+ * 修改联系人：删除回车保留原值逻辑，输入空则不更新该项
+ */
+int modifyContact(const char* oldName, const char* newName, const char* newPhone, const char* newGroup) {
+    Contact* target = searchContact(oldName);
+    if (target == NULL) {
+        printf("错误：未找到姓名为 %s 的联系人！\n", oldName);
+        return 0;
+    }
+
+    // 修改姓名（不为空才更新，空不处理）
+    if (strlen(newName) > 0)
+    {
+        if (strcmp(newName, target->name) != 0)
+        {
+            if (isNameExist(newName))
+            {
+                printf("错误：修改后的姓名已存在，修改失败！\n");
+                return 0;
+            }
+            char tmpPhone[MAX_PHONE], tmpGroup[MAX_GROUP];
+            strcpy(tmpPhone, target->phone);
+            strcpy(tmpGroup, target->group);
+            deleteContact(oldName, 0);
+            addContact(newName, tmpPhone, tmpGroup);
+            saveToFile(FILENAME);
+        }
+    }
+    // 电话不为空则更新
+    if (strlen(newPhone) > 0)
+    {
+        strcpy(target->phone, newPhone);
+    }
+    // 群组不为空则更新
+    if (strlen(newGroup) > 0)
+    {
+        strcpy(target->group, newGroup);
+    }
+
+    saveToFile(FILENAME);
+    printf("联系人信息修改成功！\n");
+    return 1;
+}
+
+/**
+ * 删除联系人 showTip=1打印删除提示，0不打印
+ */
+int deleteContact(const char* name, int showTip) {
+    if (name == NULL || strlen(name) == 0) return 0;
+
+    char initial = getInitial(name);
+    int index;
+    if (initial >= 'a' && initial <= 'z') {
+        index = initial - 'a';
+    } else {
+        index = 26;
+    }
+
+    Contact* curr = headers[index];
+    Contact* prev = NULL;
+
+    while (curr != NULL) {
+        if (strcmp(curr->name, name) == 0) {
+            if (prev == NULL) {
+                headers[index] = curr->next;
+            } else {
+                prev->next = curr->next;
+            }
+            free(curr);
+            saveToFile(FILENAME);
+            if(showTip == 1)
+                printf("联系人删除成功！\n");
+            return 1;
+        }
+        prev = curr;
+        curr = curr->next;
+    }
+    printf("错误：未找到姓名为 %s 的联系人！\n", name);
+    return 0;
+}
+
+/**
+ * 按群组浏览联系人
+ */
+void browseByGroup(const char* groupName) {
+    if (groupName == NULL || strlen(groupName) == 0) {
+        printf("错误：群组名称无效！\n");
+        return;
+    }
+
+    printf("\n========================================\n");
+    printf("     群组【%s】联系人\n", groupName);
+    printf("========================================\n");
+
+    int found = 0;
+    for (int i = 0; i < LETTER_COUNT; i++) {
+        Contact* curr = headers[i];
+        int hasInGroup = 0;
+
+        while (curr != NULL) {
+            if (strcmp(curr->group, groupName) == 0) {
+                if (!hasInGroup) {
+                    if (i < 26) {
+                        printf("\n[ %c ]\n", 'A' + i);
+                    } else {
+                        printf("\n[ # ]\n");
+                    }
+                    hasInGroup = 1;
+                }
+                printf("  姓名：%-10s 电话：%-15s\n", curr->name, curr->phone);
+                found++;
+            }
+            curr = curr->next;
+        }
+    }
+
+    if (found == 0) {
+        printf("\n  该群组暂无联系人。\n");
+    } else {
+        printf("\n----------------------------------------\n");
+        printf("  共 %d 位联系人\n", found);
+    }
+    printf("========================================\n");
+}
+
+/**
+ * 从文件加载联系人数据（分隔符改为|，防止逗号冲突）
+ */
+int loadFromFile(const char* filename) {
+    FILE* fp = fopen(filename, "r");
+    if (fp == NULL) {
+        // 文件不存在则创建空文件
+        fp = fopen(filename, "w");
+        if (fp != NULL) fclose(fp);
+        return 0;
+    }
+
+    char line[256];
+    int count = 0;
+
+    while (fgets(line, sizeof(line), fp)) {
+        line[strcspn(line, "\n")] = '\0';
+        if (strlen(line) == 0) continue;
+
+        char name[MAX_NAME], phone[MAX_PHONE], group[MAX_GROUP];
+        if (sscanf(line, "%[^|]|%[^|]|%[^\n]", name, phone, group) == 3) {
+            if (addContact(name, phone, group)) {
+                count++;
+            }
+        }
+    }
+    fclose(fp);
+    return count;
+}
+
+/**
+ * 保存联系人数据到文件（分隔符改为|）
+ */
+int saveToFile(const char* filename) {
+    FILE* fp = fopen(filename, "w");
+    if (fp == NULL) {
+        printf("错误：无法打开文件 %s 进行写入！\n", filename);
+        return 0;
+    }
+
+    int count = 0;
+    for (int i = 0; i < LETTER_COUNT; i++) {
+        Contact* curr = headers[i];
+        while (curr != NULL) {
+            fprintf(fp, "%s|%s|%s\n", curr->name, curr->phone, curr->group);
+            curr = curr->next;
+            count++;
+        }
+    }
+    fclose(fp);
+    return count;
+}
+
+/**
+ * 释放所有链表内存
+ */
+void freeAll(void) {
+    for (int i = 0; i < LETTER_COUNT; i++) {
+        Contact* curr = headers[i];
+        while (curr != NULL) {
+            Contact* temp = curr;
+            curr = curr->next;
+            free(temp);
+        }
+        headers[i] = NULL;
+    }
+}
+
+/**
+ * 显示主菜单
+ */
+void showMainMenu(void) {
+    printf("\n");
+    printf("========================================\n");
+    printf("      手机通讯录管理系统 v1.0\n");
+    printf("========================================\n");
+    printf("  1. 添加联系人\n");
+    printf("  2. 显示所有联系人（按声母分组）\n");
+    printf("  3. 按姓名查找联系人\n");
+    printf("  4. 修改联系人信息\n");
+    printf("  5. 删除联系人\n");
+    printf("  6. 按群组浏览\n");
+    printf("  7. 退出系统\n");
+    printf("========================================\n");
+    printf("  请选择操作（1-7）：");
+}
+
+/**
+ * 主函数
+ */
+int main(void) {
+    // 强制控制台GBK编码，解决中文乱码
+    system("chcp 936 > nul");
+    setlocale(LC_ALL, "zh_CN.GBK");
+
+    // 初始化声母分组头指针
+    for (int i = 0; i < LETTER_COUNT; i++) {
+        headers[i] = NULL;
+    }
+
+    // 程序启动加载文件
+    int loaded = loadFromFile(FILENAME);
+    printf("已加载 %d 位联系人信息。\n", loaded);
+
+    int running = 1;
+    int choice;
+    int saved;
+    char name[MAX_NAME], phone[MAX_PHONE], group[MAX_GROUP];
+    char newName[MAX_NAME], newPhone[MAX_PHONE], newGroup[MAX_GROUP];
+    Contact* found;
+
+    while (running) {
+        showMainMenu();
+        // 处理输入非数字卡死问题
+        int ret = scanf("%d", &choice);
+        if (ret != 1)
+        {
+            while(getchar() != '\n');
+            printf("无效的选择，请重新输入（1-7）！\n");
+            continue;
+        }
+        getchar();  // 清除缓冲区换行，解决scanf+fgets输入异常
+
+        switch (choice) {
+            case 1:  // 添加联系人
+                printf("请输入姓名：");
+                fgets(name, sizeof(name), stdin);
+                name[strcspn(name, "\n")] = '\0';
+
+                printf("请输入电话号码：");
+                fgets(phone, sizeof(phone), stdin);
+                phone[strcspn(phone, "\n")] = '\0';
+
+                printf("请输入群组（亲属/同事/同学/领导/朋友/自定义）：");
+                fgets(group, sizeof(group), stdin);
+                group[strcspn(group, "\n")] = '\0';
+
+                if (addContact(name, phone, group)) {
+                    printf("联系人添加成功！\n");
+                    saveToFile(FILENAME);
+                }
+                break;
+
+            case 2:  // 显示全部联系人
+                displayAll();
+                break;
+
+            case 3:  // 查找联系人
+                printf("请输入要查找的姓名：");
+                fgets(name, sizeof(name), stdin);
+                name[strcspn(name, "\n")] = '\0';
+
+                found = searchContact(name);
+                if (found != NULL) {
+                    printf("\n查找结果：\n");
+                    printf("  姓名：%s\n", found->name);
+                    printf("  电话：%s\n", found->phone);
+                    printf("  群组：%s\n", found->group);
+                    printf("  声母分组：%c\n", toupper(found->initial));
+                } else {
+                    printf("未找到姓名为 %s 的联系人！\n", name);
+                }
+                break;
+
+            case 4:  // 修改联系人（删除回车保留提示，必须输入新内容）
+                printf("请输入要修改的联系人姓名：");
+                fgets(name, sizeof(name), stdin);
+                name[strcspn(name, "\n")] = '\0';
+
+                found = searchContact(name);
+                if (found == NULL) {
+                    printf("未找到姓名为 %s 的联系人！\n", name);
+                    break;
+                }
+
+                printf("请输入新姓名：");
+                fgets(newName, sizeof(newName), stdin);
+                newName[strcspn(newName, "\n")] = '\0';
+
+                printf("请输入新电话：");
+                fgets(newPhone, sizeof(newPhone), stdin);
+                newPhone[strcspn(newPhone, "\n")] = '\0';
+
+                printf("请输入新群组：");
+                fgets(newGroup, sizeof(newGroup), stdin);
+                newGroup[strcspn(newGroup, "\n")] = '\0';
+
+                modifyContact(name, newName, newPhone, newGroup);
+                break;
+
+            case 5:  // 删除联系人
+                printf("请输入要删除的联系人姓名：");
+                fgets(name, sizeof(name), stdin);
+                name[strcspn(name, "\n")] = '\0';
+                deleteContact(name, 1);
+                break;
+
+            case 6:  // 按群组浏览
+                printf("请输入群组名称（亲属/同事/同学/领导/朋友/自定义）：");
+                fgets(group, sizeof(group), stdin);
+                group[strcspn(group, "\n")] = '\0';
+                browseByGroup(group);
+                break;
+
+            case 7: {
+                printf("正在保存数据...\n");
+                saved = saveToFile(FILENAME);
+                printf("已保存 %d 位联系人信息。\n", saved);
+                printf("正在释放内存...\n");
+                freeAll();
+                printf("感谢使用手机通讯录管理系统，再见！\n");
+                running = 0;
+                break;
+            }
+
+            default:
+                printf("无效的选择，请重新输入（1-7）！\n");
+                break;
+        }
+    }
+
+    return 0;
+}
